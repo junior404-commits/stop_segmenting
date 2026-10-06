@@ -1,2 +1,2 @@
-# stop_segmenting
+# stop_labeling
 stop segmenting! a repository focusing on gathering data using SAM2 model!
