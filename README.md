@@ -1,2 +1,2 @@
 # stop_segmenting
-stop segmenting! a repository focusing on detecting stop signs using machine learning!
+stop segmenting! a repository focusing on gathering data using SAM2 model!
