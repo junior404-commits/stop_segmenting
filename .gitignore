@@ -31,3 +31,6 @@ Thumbs.db
 #SAM2 Model Weights and Architecture
 checkpoints/
 sam2/
+
+# Image Testing Set
+/Dataset/ 

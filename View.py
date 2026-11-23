@@ -1,7 +1,28 @@
-"""stop sign sam2 gui"""
+"""
+  ____    _    __  __ ____
+ / ___|  / \  |  \/  |___ \
+ \___ \ / _ \ | |\/| | __) |
+  ___) / ___ \| |  | |/ __/
+ |____/_/   \_\_|  |_|_____|
+
++---------------------------------------------------+
+|           SAM2 IMAGE SEGMENTATION GUI             |
+|---------------------------------------------------|
+|     AI-POWERED IMAGE SEGMENTATION & MASKING       |
+|                                                   |
+|   [ IMAGE INPUT ]  --->  [ SEGMENTATION MASK ]    |
+|                                                   |
+|   Model: Segment Anything Model 2 (SAM2)          |
+|   Interface: Python / Tkinter                     |
+|   Architecture: MVVM                              |
+|   Dev: Ernesto Ordonez                            |
++---------------------------------------------------+
+"""
+
 import ViewModel
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from PIL import ImageTk, Image
 
 class MainController_Callback():
     """
@@ -36,12 +57,12 @@ class MainController(tk.Tk):
         
         self.frames = {} 
 
-        for F in (stop_screen, ):
+        for F in (HomeMenu, stop_screen, ):
             frame = F(parent = container, controller = self)
             self.frames[F] = frame
             frame.grid(row = 0, column = 0, sticky = "nsew")
 
-        self.show_frame(stop_screen)
+        self.show_frame(HomeMenu)
 
     def show_frame(self, screen_class):
         frame = self.frames[screen_class]
@@ -54,14 +75,26 @@ class MainController(tk.Tk):
     def _on_close(self) -> None:
         self.destroy()
 
+class HomeMenu(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent)
+        self.controller = controller
+        self.grid_rowconfigure(0, weight = 1) #Expand Grid Row 0
+        self.grid_columnconfigure(0, weight = 1) #Expand Grid Column 0
+        tk.Label(self, text = "Welcome to the SAM2 data collection tool, an AI Powered Image Segmentation and Masking tool.").grid(row = 0, column = 0)
+        tk.Button(self, text = "Enter Application", command = lambda: controller.show_frame(stop_screen)).grid(row = 1, column = 0)
+    def start_model_loading(self):
+        """maybe we should begin model loading in the home screen."""
+        print("Hmmm")
+
 class stop_screen(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
         
         #configure rows and columns
-        self.grid_rowconfigure(1, weight = 1)   #row 1, weight 1
-        self.grid_columnconfigure(0, weight = 1)#column 0, weight 1
+        self.grid_rowconfigure(1, weight = 1)   
+        self.grid_columnconfigure(0, weight = 1)
 
         #create Frame for TOP STATUS LABELS
         status_frame = tk.Frame(self)
@@ -97,88 +130,296 @@ class stop_screen(tk.Frame):
 
         button_navigation_frame = tk.Frame(self)
         button_navigation_frame.grid(row = 3, column=0, sticky='ew')
-        button_navigation_frame.grid_columnconfigure(3, weight = 1)  #expand column 3(0, 1, 2, 3), where 0 and 1 are filled with widgets
+        button_navigation_frame.grid_columnconfigure(6, weight = 1)  #expand column 3, where (0, 1, 2) are filled with widgets
         self.select_directory_button = tk.Button(button_navigation_frame, text = "Select Directory", command = self.select_directory, )
         self.select_directory_button.grid(row = 0, column = 0, padx = (10, 0), pady = (0, 10), sticky = 'w')
-        self.previous_image = tk.Button(button_navigation_frame, text = "Previous Image", command = self._previous_image,)
-        self.previous_image.grid(row = 0, column = 1, padx = (15, 0), pady = (0, 10))
-        self.next_image = tk.Button(button_navigation_frame, text = "Next Image", command = self._next_image, )
-        self.next_image.grid(row = 0, column = 2, padx = (10, 0), pady = (0, 10))
+        self.previous_image_button = tk.Button(button_navigation_frame, text = "Previous Image", command = self._previous_image,)
+        self.previous_image_button.grid(row = 0, column = 1, padx = (15, 0), pady = (0, 10))
+        self.next_image_button = tk.Button(button_navigation_frame, text = "Next Image", command = self._next_image, )
+        self.next_image_button.grid(row = 0, column = 2, padx = (5, 0), pady = (0, 10))
+        #ttk.Separator(button_navigation_frame, orient = 'vertical').pack(side='left', fill = 'y', padx = 10)
+        ttk.Separator(button_navigation_frame, orient = 'vertical').grid(row = 0, column = 3, sticky = 'ns', padx = (10, 0))
 
-        #GUI STATE RELATED OBJECTS
-        self.is_processing = None
-        self.is_model_loading = None
+        self.show_assigned_masks_button = tk.Button(button_navigation_frame, text = "Show Candidates", command = self.show_assignments, )
+        self.show_assigned_masks_button.grid(row = 0, column = 4, padx = (10, 0), pady = (0, 10))
+        self.remove_previously_selected_candidate_button = tk.Button(button_navigation_frame, text = "Remove Selected Candidate", command = self.remove_selected_candidate, )
+        self.remove_previously_selected_candidate_button.grid(row = 0, column = 5, padx = (5, 0), pady = (0, 10))
+        self.save_classified_composite_button = tk.Button(button_navigation_frame, text = 'Save Classified Composite', command = self.save_classified_composite, )
+        self.save_classified_composite_button.grid(row = 0, column = 6, padx = (0, 10), pady=(0, 10), sticky= 'e') #right side of the panel
 
+        #MODEL LOADING FOR GUI WIDGET CONFIGURATION STATES
+        self.is_processing = False # i might want to make a reference to backend self.controller.view_model.is_processing()
+        self.is_model_loading = False #currently not being used
+        self.is_directory_selected = False
+
+        #IMAGE OBJECTS
+        self.current_tk_mask_overlay_photoimage: ImageTk.PhotoImage | None = None #overlay
+        self.current_tk_image: ImageTk.PhotoImage | None = None
+
+        #IMAGE STATUS
+        self.current_image_index = None
         self._update_controls()
         self.start_model_loading()
 
-    def _update_controls(self):
+    def _update_controls(self) -> None:
         """Button state logic"""
         #valid_image = not processing, image displayed on canvas, model is ready
-        self.select_directory_button.configure(state = tk.NORMAL if not self.is_processing else tk.DISABLED)
-        self.previous_image.configure(state = tk.NORMAL if not self.is_processing else tk.DISABLED)         #fix this once image has been appended to canvas(once user can see image), 
-        self.next_image.configure(state = tk.NORMAL if not self.is_processing else tk.DISABLED)
+        controls_blocked = self.is_processing or self.is_model_loading
+        valid_image = self.controller.view_model.get_processed_image_paths() is not None   #valid image should be if self.image_paths[self.current_image_index]
+        current_image_index, total_images = self.controller.view_model.get_image_path_info()
 
-    def _set_canvas_message(self, message: str):
-        self.image_canvas.delete("all")
 
-        self.canvas_message_id = self.image_canvas.create_text(self.image_canvas.winfo_width() / 2, self.image_canvas.winfo_height() / 2, text = message, fill = 'white', justify = 'center', font=('Arial', 16))
+        self.select_directory_button.configure(state = tk.NORMAL 
+                                               if not self.is_processing 
+                                               else tk.DISABLED)
 
-    def _finish_model_loading(self):
-        self.is_processing = False
-        self._update_controls()
-        self.progress_bar.stop()
-        self.device_label.configure(text=f"Device: {self.controller.view_model.get_device_name()}")
-        self.status_label.configure(text = "SAM2 model ready!")
-        self._set_canvas_message("SAM2 finished Loading. \nSelect an Image Directory to Begin.")
 
-    def _handle_model_loading_error(self):
-        self.is_processing = False
-        self._update_controls()
-        self.progress_bar.stop()
-        self.device_label.configure(text = 'Failed')
-        self.status_label.configure(text = "SAM2 model failed to load.")
-        self._set_canvas_message("SAM2 model failed to load.")
-        _, model_error = self.controller.view_model.get_model_status()
-        messagebox.showerror("Model Failure", f"Error loading Model: {model_error}")
+        self.previous_image_button.configure(state = tk.NORMAL 
+                                             if valid_image
+                                             and current_image_index > 0
+                                             and not controls_blocked
+                                             else tk.DISABLED)
 
-    def _start_processing_state(self):
-        """
-        Configure GUI objects once model finishes loading.
-        """
-        model_status, model_error_status = self.controller.view_model.get_model_status()
-        if model_status:
-            self._finish_model_loading()
-            return
-        if model_error_status:
-            self._handle_model_loading_error()
-            return
-        self.after(100, self._start_processing_state, )
+        self.next_image_button.configure(state = tk.NORMAL
+                                          if valid_image
+                                          and current_image_index < total_images   #might have to create/update current_image_index in View.py
+                                          and not controls_blocked
+                                          else tk.DISABLED)
+        #self.next_image_button.configure(state = tk.NORMAL)
+                                          
 
-    def start_model_loading(self):
+        #image_control_state = tk.NORMAL if valid_image and not controls_blocked else tk.DISABLED
+        self.show_assigned_masks_button.configure(state = tk.NORMAL
+                                                  if valid_image
+                                                  and not controls_blocked
+                                                  else
+                                                  tk.DISABLED)
+
+        self.remove_previously_selected_candidate_button.configure(state = tk.NORMAL
+                                                                   if valid_image
+                                                                   and not controls_blocked
+                                                                   else tk.DISABLED)
+
+        #if len(masks) > 0 and not controls blocked, for now just valid image and controls blocked
+        self.save_classified_composite_button.configure(state = tk.NORMAL
+                                                        if valid_image
+                                                        and not controls_blocked
+                                                        else
+                                                        tk.DISABLED)
+        
+    def start_model_loading(self) -> None:
+        """Make Call to multithreading function in ViewModel which is responsible for running"""
         self.is_processing = True
         self._update_controls()
+        
         self.progress_bar.start(10)
         self.controller.view_model.start_model_loading()
         self._start_processing_state()
 
+    def _start_processing_state(self):
+        """Wait for model status objects to update once model finishes loading.
+        Calls _finish_model_loading(), a function that configures the Progress bar,
+        Device Label, and Status label that signifies the model status to the GUI state..
+        """
+        model_status, model_error_status = self.controller.view_model.get_model_status()
+        if model_status:
+            self._finish_model_loading(model_status_information = "SAM2 model ready!", canvas_message = "SAM2 Finished Loading. \nSelect an Image Directory to Begin.")
+            return
+        if model_error_status:
+            self._finish_model_loading(model_status_information= "SAM2 model failed to load.", canvas_message = "SAM2 model failed to load.")
+            return
+        self.after(100, self._start_processing_state, )
+    
+    def _finish_model_loading(self, model_status_information, canvas_message):
+        """Configure GUI widgets once the model has finished loading."""
+        self.is_processing = False
+        self._update_controls()
+        self._update_status_frame(model_status_information) # more labels will be added here later
+        self.progress_bar.stop()
+        self.device_label.configure(text = f"Device: {self.controller.view_model.get_device_name()}")
+        
+        self._set_canvas_message(canvas_message)
+        #MODEL ERROR MESSAGE
+        _, model_error = self.controller.view_model.get_model_status()
+        if model_error:
+            messagebox.showerror("Model Failure", f"Error loading Model: {model_error}")
+    
+    def _set_canvas_message(self, message: str) -> None:
+        """Edit Tkinter Canvas message label."""
+        self.image_canvas.delete("all")
+
+        self.canvas_message_id = self.image_canvas.create_text(self.image_canvas.winfo_width() // 2, self.image_canvas.winfo_height() // 2, text = message, fill = 'white', justify = 'center', font=('Arial', 16))
+    
     def select_directory(self):
-        """Refactor this function: not acceptable: Use callback class """
-        try:
-            self.controller.view_model.select_directory()
-        except Exception as e:
-            print(e)
-        print("select directory logic")
+        """Orchestrator Function: A function for coordinating several smaller operations."""    
+        self.controller.view_model.select_directory()
+        if not self.controller.view_model.get_selected_directory():
+            print('RETURNING NONE SELECTED_DIRECTORY')
+            return
+        
+        if not self.controller.view_model.get_processed_image_paths():
+            messagebox.showinfo("!", "Please Select a directory with valid images!")
+            return    
 
-    def _previous_image(self):
+        self.is_directory_selected = True
+        self._update_image_counter()
+        self._update_mask_counter()
+        self._update_status_frame("SAM2 model loading...")
+        self._display_tkinter_image()
+        #print('inference mode activated: self._begin_image_inference()')
+        self._begin_image_inference()
+
+    def _update_image_counter(self):
+        current_image_index, total_images = self.controller.view_model.get_image_path_info()
+        self.image_information_label.configure(text = f"Images: {current_image_index + 1} / {total_images}")
+
+    def _update_mask_counter(self):
+        total_current_masks = self.controller.view_model.get_total_masks()
+        self.mask_information_label.configure(text = f"Masks: {total_current_masks}")
+
+    def _update_status_frame(self, model_status_information):
+        self.status_label.configure(text = model_status_information)
+
+    def _display_tkinter_image(self) -> None:
+        """
+        Create and return ImageTk Object in backend, update GUI widget to display the image.
+
+        This function must be ran on the main thread as this function directly modifies the GUI widgets.
+        """
+        tk_image = self.controller.view_model.retrieve_current_tkimage()
+        self.current_tk_image = tk_image
+        self.canvas_message_id = self.image_canvas.create_image(self.image_canvas.winfo_width() // 2, self.image_canvas.winfo_height() // 2, image = tk_image, anchor = 'center')
+
+    def _display_tkinter_overlay(self):
+        tk_mask = self.controller.view_model.retrieve_overlay_image() # we might want to switch this to retrieve_current_overlay image() --> containing logic for current image
+        self.canvas_message_id = self.image_canvas.create_image(self.image_canvas.winfo_width() // 2, self.image_canvas.winfo_height() // 2, image = tk_mask, anchor = 'center')
+
+    def redesign_display_tkinter_overlay(self, overlay) -> None:
+        """
+        [HELPER FUNCTION] This function must be executed on the main thread.
+        """
+        #if not overlay:
+        #    self._begin_image_inference()
+        self.current_tk_mask_overlay_photoimage = overlay
+        self.canvas_message_id = self.image_canvas.create_image(self.image_canvas.winfo_width() // 2, self.image_canvas.winfo_height() // 2, image = self.current_tk_mask_overlay_photoimage, anchor = 'center')
+
+    def _display_current_image_state(self):
+        """This function must be executed on the main thread.
+        if overlay is not none will always be not none, therefore, this function will have issues, only meant for the niche use case of the beginning of the program
+        """
+        overlay = self.controller.view_model.retrieve_overlay_image() #ImageTk.PhotoImage object: this can be saved in a separate object
+        if overlay is not None:
+            self.redesign_display_tkinter_overlay(overlay)
+        else:
+            self._display_tkinter_image()
+            self._begin_image_inference()
+
+    def _begin_image_inference(self) -> None:
+        """
+        Assumes image has been plopped to the screen.
+        Dev Note: Take into consideration the multithreading techniques used to start loading the model
+        Call backend logic required for running inference on an image using multithreading.
+        """
+        self.progress_bar.start(10)
+        self.is_processing = True
+        self._update_controls()
+        #self.update_status_frame(model_status_information) <-- i want to create a function that takes information and updates labels that are on the top frame of the GUI
+        self.controller.view_model.process_current_image()
+        self._processing_image()   
+
+    def _processing_image(self) -> None:
+        image_status, image_error_status = self.controller.view_model.get_image_processing_status()
+        if image_status:
+            self._finish_image_processing("SAM2 model finished Processing")
+            return
+
+        if image_error_status:
+            self._handle_image_processing_error()
+            return
+        self.after(100, self._processing_image, )
+
+    def _finish_image_processing(self, model_status_information) -> None:
+        """Configure GUI widget and label state logic once an image is done running inference using the SAM2 model."""
+        print("Finished Image Processing")
+        self.is_processing = False
+        self._update_controls()
+        self._update_status_frame(model_status_information)
+        self._update_mask_counter()
+
+        self.progress_bar.stop()
+        self.image_canvas.delete("all")
+        self._display_tkinter_overlay()
+        #self._display_current_image_state()
+
+    def _handle_image_processing_error(self) -> None:
+        """logic goes here when running inference on an image fails:
+        display error message logic will go here
+        """
+        print("There was an issue processing the image.")
+        self.is_processing = False
+        self._update_controls()
+        self.progress_bar.stop()
+        _, image_status_error = self.controller.view_model.get_image_processing_status()
+        messagebox.showerror("Image Inference Failed", f"{image_status_error}")
+
+    def _previous_image(self) -> None:
+        """
+        Logic for selecting and displaying the previous_image_path in an image path.
+
+        Currently, if a previous_image contains a mask, we want to be able to retrieve that mask and display it on the screen
+        """
         print("logic for previous image")
+        self.controller.view_model.set_previous_image_index()    #decrement image path
+        self.image_canvas.delete('all')
+        self._update_controls()
 
-    def _next_image(self):
-        print("logic for next image")
+        self._update_image_counter() #G
+        self._update_mask_counter() #G
 
+        self._display_tkinter_image() #G
+        self._display_tkinter_overlay() #G
+
+    def _next_image(self) -> None:
+        """Logic for selecting and displaying the next image in selected image path."""
+        #nonetype has no attribute (len)
+        self.controller.view_model.set_next_image_index() #this function is going to need refactoring, all we need to do is increment image_path
+        self.image_canvas.delete('all')
+        self._update_controls()
+
+        self._update_image_counter()
+        self._update_mask_counter()
+
+        self._display_tkinter_image()
+        self._display_tkinter_overlay()
+
+        #if tk_mask is None:
+        #            self._begin_image_inference()
+        
+
+    def show_original(self) -> None:
+        """Show original PhotoImage. This button should only be activated if there are generated masks to be displayed"""
+        pass
+    def show_assignments(self) -> None:
+        """retrieving Image + Mask object overlay to display masked assignments.
+        show original and show assignments function: remmeber to configure
+        
+        """
+        
+        pass
+
+    def remove_selected_candidate(self):
+        """Remove the previously selected mask candidate."""
+        pass
+
+    def save_classified_composite(self):
+        """Save the current classified composite."""
+        pass
     def _on_image_click(self, event: tk.Event) -> None:
         if self.is_processing:
             return
+
+    def center_canvas(self, event: tk.Event) -> None:
+        pass
 
     #def _on_canvas_resize(self, _event: tk.Event) -> None:
 
