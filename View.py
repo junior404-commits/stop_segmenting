@@ -116,8 +116,8 @@ class stop_screen(tk.Frame):
         image_frame.grid_columnconfigure(0, weight = 1)
         self.image_canvas = tk.Canvas(image_frame, background = '#202020', highlightthickness=0, cursor = 'crosshair')
         self.image_canvas.grid(row = 0, column = 0, sticky = 'nsew')
-        self.image_canvas.bind('<Button-1>', self._on_image_click)
-        #self.image_canvas.bind('<Configure>', self._on_cavas_resize)
+        #self.image_canvas.bind('<Button-1>', self._on_image_click)
+        self.image_canvas.bind('<Configure>', self._on_canvas_resize)
         self.canvas_message_id = self.image_canvas.create_text(625,425, text="SAM2 Model Loading... \nOnce Model finishes loading, Select an image directory", fill='white', justify = 'center',font=('Arial', 16))
 
         information_frame = tk.Frame(self)
@@ -165,7 +165,7 @@ class stop_screen(tk.Frame):
         """Button state logic"""
         #valid_image = not processing, image displayed on canvas, model is ready
         controls_blocked = self.is_processing or self.is_model_loading
-        valid_image = self.controller.view_model.get_processed_image_paths() is not None   #valid image should be if self.image_paths[self.current_image_index]
+        valid_image = self.controller.view_model.get_processed_image_paths() is not None   #valid image should be if self.image_paths[self.current_image_index] is true, then valid images exist within the directory
         current_image_index, total_images = self.controller.view_model.get_image_path_info()
 
 
@@ -182,7 +182,7 @@ class stop_screen(tk.Frame):
 
         self.next_image_button.configure(state = tk.NORMAL
                                           if valid_image
-                                          and current_image_index < total_images   #might have to create/update current_image_index in View.py
+                                          and current_image_index < total_images  
                                           and not controls_blocked
                                           else tk.DISABLED)
         #self.next_image_button.configure(state = tk.NORMAL)
@@ -215,7 +215,7 @@ class stop_screen(tk.Frame):
         self.progress_bar.start(10)
         self.controller.view_model.start_model_loading()
         self._start_processing_state()
-
+        
     def _start_processing_state(self):
         """Wait for model status objects to update once model finishes loading.
         Calls _finish_model_loading(), a function that configures the Progress bar,
@@ -248,7 +248,7 @@ class stop_screen(tk.Frame):
         """Edit Tkinter Canvas message label."""
         self.image_canvas.delete("all")
 
-        self.canvas_message_id = self.image_canvas.create_text(self.image_canvas.winfo_width() // 2, self.image_canvas.winfo_height() // 2, text = message, fill = 'white', justify = 'center', font=('Arial', 16))
+        self.canvas_message_id = self.image_canvas.create_text(self.image_canvas.winfo_width() // 2, self.image_canvas.winfo_height() // 2, text = message, fill = 'white', justify = 'center', font=('Arial', 16), tags = ('canvas_message'))
     
     def select_directory(self):
         """Orchestrator Function: A function for coordinating several smaller operations."""    
@@ -264,9 +264,8 @@ class stop_screen(tk.Frame):
         self.is_directory_selected = True
         self._update_image_counter()
         self._update_mask_counter()
-        self._update_status_frame("SAM2 model loading...")
+
         self._display_tkinter_image()
-        #print('inference mode activated: self._begin_image_inference()')
         self._begin_image_inference()
 
     def _update_image_counter(self):
@@ -288,44 +287,34 @@ class stop_screen(tk.Frame):
         """
         tk_image = self.controller.view_model.retrieve_current_tkimage()
         self.current_tk_image = tk_image
-        self.canvas_message_id = self.image_canvas.create_image(self.image_canvas.winfo_width() // 2, self.image_canvas.winfo_height() // 2, image = tk_image, anchor = 'center')
+        self.canvas_message_id = self.image_canvas.create_image(self.image_canvas.winfo_width() // 2, self.image_canvas.winfo_height() // 2, image = tk_image, anchor = 'center', tags = ('original_image', ))
 
-    def _display_tkinter_overlay(self):
-        tk_mask = self.controller.view_model.retrieve_overlay_image() # we might want to switch this to retrieve_current_overlay image() --> containing logic for current image
-        self.canvas_message_id = self.image_canvas.create_image(self.image_canvas.winfo_width() // 2, self.image_canvas.winfo_height() // 2, image = tk_mask, anchor = 'center')
-
-    def redesign_display_tkinter_overlay(self, overlay) -> None:
+    def _display_tkinter_overlay(self) -> bool:
         """
-        [HELPER FUNCTION] This function must be executed on the main thread.
+        I would prefer separating determining whether inference is necessary from displaying the overlay.
+        display function should be responsible for rendering, not determining whether backend computation has already been performed.
         """
-        #if not overlay:
-        #    self._begin_image_inference()
+        overlay = self.controller.view_model.retrieve_overlay_image() # we might want to switch this to retrieve_current_overlay image() --> containing logic for current image
+        if overlay is None:
+            return False
         self.current_tk_mask_overlay_photoimage = overlay
-        self.canvas_message_id = self.image_canvas.create_image(self.image_canvas.winfo_width() // 2, self.image_canvas.winfo_height() // 2, image = self.current_tk_mask_overlay_photoimage, anchor = 'center')
+        self.canvas_message_id = self.image_canvas.create_image(self.image_canvas.winfo_width() // 2, self.image_canvas.winfo_height() // 2, image = self.current_tk_mask_overlay_photoimage, anchor = 'center', tags = ('mask_overlay'))
+        return True
 
-    def _display_current_image_state(self):
-        """This function must be executed on the main thread.
-        if overlay is not none will always be not none, therefore, this function will have issues, only meant for the niche use case of the beginning of the program
-        """
-        overlay = self.controller.view_model.retrieve_overlay_image() #ImageTk.PhotoImage object: this can be saved in a separate object
-        if overlay is not None:
-            self.redesign_display_tkinter_overlay(overlay)
-        else:
-            self._display_tkinter_image()
-            self._begin_image_inference()
-
-    def _begin_image_inference(self) -> None:
+    def _begin_image_inference(self):
         """
         Assumes image has been plopped to the screen.
         Dev Note: Take into consideration the multithreading techniques used to start loading the model
         Call backend logic required for running inference on an image using multithreading.
         """
+        print('View.stop_screen._begin_image_inference()> inference mode activated')
+        #Activate Progress bar, update controls for buttons, and update the status frame to notify the user that the model is currently loading.
         self.progress_bar.start(10)
         self.is_processing = True
         self._update_controls()
-        #self.update_status_frame(model_status_information) <-- i want to create a function that takes information and updates labels that are on the top frame of the GUI
+        self._update_status_frame(model_status_information = "SAM2 model loading...")
         self.controller.view_model.process_current_image()
-        self._processing_image()   
+        self._processing_image()
 
     def _processing_image(self) -> None:
         image_status, image_error_status = self.controller.view_model.get_image_processing_status()
@@ -333,7 +322,7 @@ class stop_screen(tk.Frame):
             self._finish_image_processing("SAM2 model finished Processing")
             return
 
-        if image_error_status:
+        if image_error_status is not None:
             self._handle_image_processing_error()
             return
         self.after(100, self._processing_image, )
@@ -342,6 +331,7 @@ class stop_screen(tk.Frame):
         """Configure GUI widget and label state logic once an image is done running inference using the SAM2 model."""
         print("Finished Image Processing")
         self.is_processing = False
+        self.controller.view_model.set_image_processing_status(False, None)
         self._update_controls()
         self._update_status_frame(model_status_information)
         self._update_mask_counter()
@@ -357,52 +347,48 @@ class stop_screen(tk.Frame):
         """
         print("There was an issue processing the image.")
         self.is_processing = False
+        #self.controller.view_model.set_image_processing_status(False, ) reconsider an additional object for the use case of handling image inference error
         self._update_controls()
         self.progress_bar.stop()
         _, image_status_error = self.controller.view_model.get_image_processing_status()
         messagebox.showerror("Image Inference Failed", f"{image_status_error}")
 
     def _previous_image(self) -> None:
-        """
-        Logic for selecting and displaying the previous_image_path in an image path.
-
-        Currently, if a previous_image contains a mask, we want to be able to retrieve that mask and display it on the screen
-        """
-        print("logic for previous image")
-        self.controller.view_model.set_previous_image_index()    #decrement image path
+        print('Previous_Image')
+        self.controller.view_model.set_previous_image_index()
         self.image_canvas.delete('all')
         self._update_controls()
 
-        self._update_image_counter() #G
-        self._update_mask_counter() #G
+        self._update_image_counter() 
+        self._update_mask_counter() 
 
-        self._display_tkinter_image() #G
-        self._display_tkinter_overlay() #G
+        self._display_tkinter_image() 
+        self._display_tkinter_overlay() 
 
-    def _next_image(self) -> None:
-        """Logic for selecting and displaying the next image in selected image path."""
-        #nonetype has no attribute (len)
-        self.controller.view_model.set_next_image_index() #this function is going to need refactoring, all we need to do is increment image_path
+    def _next_image(self):
+        print("Next Image")
+        self.controller.view_model.set_next_image_index()        
+
         self.image_canvas.delete('all')
         self._update_controls()
 
         self._update_image_counter()
-        self._update_mask_counter()
+        self._update_mask_counter() #remember to update mask counter when clicking on a new image, and no masks exist for that particular image
 
         self._display_tkinter_image()
-        self._display_tkinter_overlay()
-
-        #if tk_mask is None:
-        #            self._begin_image_inference()
-        
-
+        if self.controller.view_model.has_cached_inference():
+            print("View.stop_screen.next_image> Calling Tkinter Overlay.")
+            self._display_tkinter_overlay()
+        else:
+            print("View.stop_screen.next_image> Calling image inference routine.")
+            self._begin_image_inference()
     def show_original(self) -> None:
         """Show original PhotoImage. This button should only be activated if there are generated masks to be displayed"""
         pass
+
     def show_assignments(self) -> None:
-        """retrieving Image + Mask object overlay to display masked assignments.
-        show original and show assignments function: remmeber to configure
-        
+        """Retrieving Image + Mask object overlay to display masked assignments.
+        show original and show assignments function
         """
         
         pass
@@ -415,14 +401,34 @@ class stop_screen(tk.Frame):
         """Save the current classified composite."""
         pass
     def _on_image_click(self, event: tk.Event) -> None:
-        if self.is_processing:
-            return
+        print("logic for on image click")
+        pass
 
     def center_canvas(self, event: tk.Event) -> None:
         pass
 
-    #def _on_canvas_resize(self, _event: tk.Event) -> None:
+    def _on_canvas_resize(self, event: tk.Event) -> None:
+        """Keep canvas images, overlays, and messages centered."""
 
+        center_x = event.width // 2
+        center_y = event.height // 2
+
+        self.image_canvas.coords("original_image", center_x, center_y)
+        self.image_canvas.coords("mask_overlay", center_x, center_y)
+        self.image_canvas.coords("canvas_message", center_x, center_y)
+        
+
+
+
+    #def _on_canvas_resize(
+    #        self,
+    #        _event: tk.Event,
+    #    ) -> None:
+    #        """Re-render the image or recenter the placeholder message after a canvas resize."""
+    #        if self.current_display_array is not None:
+    #            self._render_current_display_array()
+    #        else:
+    #            self._center_canvas_message()
 
     
 if __name__ == "__main__":

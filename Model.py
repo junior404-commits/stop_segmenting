@@ -56,7 +56,7 @@ class ModelRoot():
         """Prepare Image Files"""
         image_files = []
         for image_file in os.listdir(image_path):
-            if image_file.endswith('.jpg') or image_file.endswith('.jpeg') or image_file.endswith('JPEG') or image_file.endswith('.tif') or image_file.endswith('.png'): #remove .png
+            if image_file.endswith('.jpg') or image_file.endswith('.jpeg') or image_file.endswith('.JPEG') or image_file.endswith('.tif') or image_file.endswith('.png'): #remove .png
                 image_files.append(image_file)
         if not image_files:
             print("There are no images inside this directory: Exiting the routine.")
@@ -71,8 +71,7 @@ class ModelRoot():
         self.current_image_path = self.image_paths[self.current_image_index]
         print("Image files successfully processed...")
 
-    def get_current_image_paths(self):
-        return self.image_paths
+    
     ##############################################
     ##             IMAGE DISPLAY                ##
     ##############################################
@@ -85,19 +84,6 @@ class ModelRoot():
         image = Image.open(current_image_path)
         self.tk_image = ImageTk.PhotoImage(image) #add self to avoid garbage collection
         return self.tk_image
-
-    #def old_display_mask(self):
-    #   """This function must be called on Main thread."""   
-    #    #maybe the mask logic could go here, and we could still return self.tk_mask
-    #    #current_mask_overlay = self.retrieve_generated_masks()
-    #
-    #    if self.current_mask_image is None:
-    #        print("There are no masks for this image")
-    #        return None
-    #    print("Retrieving Mask Overlay as ImageTk.PhotoImage")
-    #    self.tk_mask = ImageTk.PhotoImage(self.current_mask_image)
-    #    #self.tk_mask = ImageTk.PhotoImage(current_mask_overlay)
-    #    return self.tk_mask    
 
     def display_mask(self):
         """This function must be called on the main thread.
@@ -122,35 +108,24 @@ class ModelRoot():
         """Process the current image using the SAM2 model on a separate thread to avoid GUI crashes.
         Load the image, generate segmentation masks using SAM2, process and store the results for display
         """
-        print("Image currently being processed.")
         current_image_path = self.get_current_image_path()
         image = Image.open(current_image_path)
         image_array = np.array(image.convert("RGB"))
         try:
             with torch.inference_mode():
-                print("Activating Inference Mode...")
+                print("ModelRoot> Activating Inference Mode...")
                 generated_masks = self.mask_generator.generate(image_array)
-                final_processed_image = self._process_generated_masks(current_image_path, generated_masks) #return overlayed image
-                self._cache_generated_masks(current_image_path, generated_masks, final_processed_image)
-
-                self.image_status =True #location switched from _process_generated_mask(generated_masks) 10/24/26 location should be switched to something related to image_status
+                overlay = self._process_overlay(current_image_path, generated_masks) #return overlayed object.
+                self._cache_generated_masks(current_image_path, generated_masks, overlay)
+                self.set_image_processing_status(image_status = True, image_error_status = None)
+                self.set_total_masks(len(generated_masks))
         except Exception as e:
-            self.image_error_status = e
+           self.set_image_processing_status(image_status = False, image_error_status = e)
         print("image has finished processing")
-    
-    def _process_generated_masks(self, image_path, generated_masks, alpha = 0.5):
-        """
-        Takes a processed torch.inferencemode() generated image, apply coloring to values
-        that are True in generated_masks
 
-        image_path: 'dir/to/image/.jpg'
-            str
+    def _process_overlay(self, image_path, generated_masks, alpha = 0.5):
+        """Return Overlay"""
         
-        generated_masks:
-            list[dict[str, Any]]
-        
-        iterates through all generated masks, multiplies each prediction by 255 to cast predictions onto the screen. Returns Overlayed image."""
-        self.total_masks = len(generated_masks)
 
         image = Image.open(image_path).convert('RGBA')
         overlay = Image.new("RGBA", image.size, (0, 0, 0, 0)) #create overlay, we can add our additional alpha channel here to add transparency to the produced color for the segmentation layer.
@@ -171,7 +146,7 @@ class ModelRoot():
 
     def _cache_generated_masks(self, image_path, generated_masks, overlay):
         """
-        Save masks that have been generated for a particular set of images.
+        Save masks that have been generated for a particular set of images to dictionary.
 
         Input Args: 
             image_path: path to your images
@@ -204,19 +179,29 @@ class ModelRoot():
         current_image_path = self.get_current_image_path()
         return self.mask_cache.get(current_image_path)
 
-    def _retrieve_cached_image_state(self):
-        """Retrieve the saved overlay and mask count for the current image."""
+    def has_cached_inference(self) -> bool:
+        return self.retrieve_generated_masks() is not None
 
-        image_path = self.get_current_image_path()
+    def set_image_processing_status(self, image_status: bool, image_error_status: Exception) -> None:
+        """
+        Reset inference status before a new processing request. These objects are required for frontend POLLING technique.
+        if image_status is true, model has successfully finished running inference on an image, and an overlay has been generated.
+        If image_error_status is not None, issue running inference on image.
+        """
+        self.image_status = image_status
+        self.image_error_status = image_error_status
 
-        cached_data = self.mask_cache.get(image_path)
+    def reset_image_processing_status(self) -> None:
+        """Reset inference status before a new processing request. These objects are required for frontend POLLING technique."""
+        self.image_status = False
+        self.image_error_status = None
 
-        if cached_data is not None:
-            self.current_mask_image = cached_data["overlay"]
-            self.total_masks = len(cached_data["masks"])
-        else:
-            self.current_mask_image = None
-            self.total_masks = 0
+    def set_total_masks(self, total_masks):
+        self.total_masks = total_masks 
+
+    def retrieve_total_masks(self) -> int:
+        return len(self.total_masks)
+
     ##############################################
     ##                  DEVICE                  ##
     ##############################################
@@ -257,14 +242,10 @@ class ModelRoot():
     ##############################################
 
     def set_previous_image_index(self):
-        if not self.image_paths:
-            return None
         self.current_image_index = (self.current_image_index - 1) % len(self.image_paths)
         return self.current_image_index
     
     def set_next_image_index(self):
-        if not self.image_paths:
-            return None
         self.current_image_index = (self.current_image_index + 1) % len(self.image_paths)
         return self.current_image_index
 
@@ -273,7 +254,9 @@ class ModelRoot():
             return None
         self.current_image_path = self.image_paths[self.current_image_index]
         return self.current_image_path
+    
+    def get_current_image_paths(self):
+        return self.image_paths
             
-
     def confirm(self):
         print("Model Layers confirmed")

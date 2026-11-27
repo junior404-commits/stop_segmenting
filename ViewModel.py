@@ -43,6 +43,7 @@ class ViewModelRoot():
     def start_model_loading(self):
         """Load SAM2 model on a separate thread."""
         #Create new thread to run model loading function
+        #self.__modelroot.reset_image_processing_status()
         try:
             threading.Thread(target = self.__modelroot.build_sam2_model, daemon = True).start() #shut down thread as soon as program finishes
         except Exception as e:
@@ -54,6 +55,9 @@ class ViewModelRoot():
             threading.Thread(target = self.__modelroot.process_current_image, daemon = True).start()
         except Exception as e:
             self._notify(e)
+
+    def has_cached_inference(self) -> bool:
+        return self.__modelroot.has_cached_inference()
 
     def get_device_name(self) -> str | None:
         """Retrieve Device Name for GUI label.
@@ -74,14 +78,24 @@ class ViewModelRoot():
         return self.__modelroot.model_status, self.__modelroot.model_error
 
     def get_current_image_path(self):
+        """
+        
+        return Type:
+            image_paths[current_image_index] --> current image path
+        
+        """
         current_image_path = self.__modelroot.get_current_image_path()
         if not current_image_path:
             return None
         return current_image_path
 
     def get_image_processing_status(self):
-        """Objects used for Polling Technique."""
+        """Objects used for Polling Technique.
+        """
         return self.__modelroot.image_status, self.__modelroot.image_error_status
+
+    def set_image_processing_status(self, image_status: bool, image_error_status: Exception) -> None:
+        self.__modelroot.set_image_processing_status(image_status, image_error_status)
 
     def retrieve_current_tkimage(self):
         """
@@ -103,11 +117,7 @@ class ViewModelRoot():
         return self.__modelroot.current_image_index
 
     def get_total_masks(self) -> int | None:
-        """
-        Retrieving current_mask_index, and total_masks from Model.py for
-        tkinter mask_label
-        
-        """
+        """total masks for tkinter mask label"""
         return self.__modelroot.total_masks
 
     def get_image_path_info(self):
